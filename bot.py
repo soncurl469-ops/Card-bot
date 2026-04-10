@@ -2,6 +2,8 @@ import re
 import os
 import logging
 import asyncio
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
@@ -9,9 +11,7 @@ from telegram.request import HTTPXRequest
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-
-# বট টোকেন - এখানে আপনার টোকেন বসান
-BOT_TOKEN = "7839522620:AAEJTKjxrjzak0zcca0eF11TzVgS0X5lNwk"   # <-- এটি পরিবর্তন করে আসল টোকেন দিন
+BOT_TOKEN = "7839522620:AAF1GmIbycG35SiITOhOYbHvwB_yc1seEQo"   # <-- এখানে আপনার আসল টোকেন দিন
 
 USER_FILE = "users.txt"
 
@@ -22,6 +22,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 awaiting_broadcast = False
+
+# Flask app for health check
+flask_app = Flask(__name__)
+
+@flask_app.route("/")
+def health():
+    return "Bot is running", 200
+
+@flask_app.route("/health")
+def health_check():
+    return "OK", 200
 
 # ===================== ইউজার ম্যানেজমেন্ট =====================
 def load_users():
@@ -109,7 +120,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     save_user(user_id)
 
-    # অ্যাডমিন ব্রডকাস্ট
     if user_id == ADMIN_ID and awaiting_broadcast:
         all_users = get_all_users()
         success_count = 0
@@ -129,7 +139,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"✅ ব্রডকাস্ট শেষ!\nসফল: {success_count}\nব্যর্থ: {fail_count}")
         return
 
-    # কার্ড ফরম্যাট চেক
     if CARD_PATTERN.match(user_input):
         member = await is_user_member(user_id, context)
         if not member:
@@ -151,14 +160,9 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode="Markdown"
     )
 
-# ===================== মেইন ফাংশন =====================
-def main():
-    # টোকেন চেক
-    if BOT_TOKEN == "এখানে বট টুকেন বসান":
-        logger.error("❌ আপনি বট টোকেন সেট করেননি! 'BOT_TOKEN' ভেরিয়েবলে আপনার আসল টোকেন দিন।")
-        return
-
-    # Python 3.14+ এর জন্য ইভেন্ট লুপ ফিক্স
+# ===================== বট চালানোর ফাংশন =====================
+def run_bot():
+    # ইভেন্ট লুপ ফিক্স (Python 3.14+)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -177,5 +181,16 @@ def main():
     logger.info("বট চালু হচ্ছে (পোলিং মোড)...")
     app.run_polling()
 
+# ===================== মেইন =====================
 if __name__ == "__main__":
-    main()
+    if BOT_TOKEN == "এখানে বট টুকেন বসান":
+        logger.error("❌ বট টোকেন সেট করুন।")
+        exit(1)
+
+    # একটি আলাদা থ্রেডে বট চালান (যাতে Flask ও পোলিং একসাথে চলে)
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+
+    # Flask সার্ভার চালু করুন (Render হেলথ চেকের জন্য)
+    port = int(os.environ.get("PORT", 5000))
+    flask_app.run(host="0.0.0.0", port=port)
