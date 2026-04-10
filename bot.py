@@ -9,9 +9,9 @@ from telegram.request import HTTPXRequest
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = os.environ.get("7839522620:AAEJTKjxrjzak0zcca0eF11TzVgS0X5lNwk")
-if not BOT_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable not set.")
+
+# বট টোকেন - এখানে আপনার টোকেন বসান
+BOT_TOKEN = "7839522620:AAEJTKjxrjzak0zcca0eF11TzVgS0X5lNwk"   # <-- এটি পরিবর্তন করে আসল টোকেন দিন
 
 USER_FILE = "users.txt"
 
@@ -153,6 +153,11 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ===================== মেইন ফাংশন =====================
 def main():
+    # টোকেন চেক
+    if BOT_TOKEN == "এখানে বট টুকেন বসান":
+        logger.error("❌ আপনি বট টোকেন সেট করেননি! 'BOT_TOKEN' ভেরিয়েবলে আপনার আসল টোকেন দিন।")
+        return
+
     # Python 3.14+ এর জন্য ইভেন্ট লুপ ফিক্স
     try:
         loop = asyncio.get_running_loop()
