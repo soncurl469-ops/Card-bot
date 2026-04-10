@@ -1,33 +1,35 @@
 import re
 import os
 import logging
+import asyncio
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+)
 
-# ===================== কনফিগারেশন =====================
+# ========== কনফিগারেশন ==========
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = "7839522620:AAHviH1of-nnj6Wxslv0YYdTE5b5CoiMNP8"   # আপনার টোকেন দিন
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "7839522620:AAHviH1of-nnj6Wxslv0YYdTE5b5CoiMNP8")
 
 USER_FILE = "users.txt"
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ফ্লাস্ক অ্যাপ
 app = Flask(__name__)
 
-# বট ও ডিসপ্যাচার
-bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
+awaiting_broadcast = False
 
-awaiting_broadcast = False  # ব্রডকাস্ট স্টেট (ইন-মেমরি)
-
-# ===================== ইউজার ম্যানেজমেন্ট =====================
+# ========== ইউজার ফাইল ম্যানেজ ==========
 def load_users():
     if not os.path.exists(USER_FILE):
         return set()
@@ -45,39 +47,35 @@ def save_user(user_id: int):
 def get_all_users():
     return load_users()
 
-# ===================== মেম্বারশিপ চেক =====================
-async def is_user_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+# ========== মেম্বারশিপ চেক ==========
+async def is_user_member(user_id: int, bot: Bot) -> bool:
     try:
-        chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        chat_member = await bot.get_chat_member(
+            chat_id=CHANNEL_USERNAME, user_id=user_id
+        )
         return chat_member.status in ("member", "administrator", "creator")
     except Exception as e:
         logger.error(f"মেম্বারশিপ চেক ব্যর্থ {user_id}: {e}")
         return False
 
-# ===================== হ্যান্ডলার =====================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# ========== হ্যান্ডলার ==========
+async def start(update: Update, context):
     user_id = update.effective_user.id
     save_user(user_id)
     welcome_text = (
-        "💠 Dear users!\n\n"
-        "🚀 JOIN OUR OFFICIAL BOT FIRST!\n"
-        "🤖 Buy Cards Instantly:\n"
-        "👉 @vanilla_cards_bot— Type /start\n"
-        "🔔 Get Instant Support:\n"
-        "👉 https://t.me/Vanila_cards\n"
-        "⚡ Early Join = Early Access\n"
-        "🔥 Don't Miss The Best Cards!"
+        "💠 Dear users!\n\n🚀 JOIN OUR OFFICIAL BOT FIRST!\n🤖 Buy Cards Instantly:\n"
+        "👉 @vanilla_cards_bot— Type /start\n🔔 Get Instant Support:\n👉 https://t.me/Vanila_cards\n"
+        "⚡ Early Join = Early Access\n🔥 Don't Miss The Best Cards!"
     )
-    keyboard = [
-        [
-            InlineKeyboardButton("💳 Buy Card", url="https://t.me/vanilla_cards_bot"),
-            InlineKeyboardButton("🔍 Card Chake", callback_data="card_check")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    keyboard = [[
+        InlineKeyboardButton("💳 Buy Card", url="https://t.me/vanilla_cards_bot"),
+        InlineKeyboardButton("🔍 Card Chake", callback_data="card_check"),
+    ]]
+    await update.message.reply_text(
+        welcome_text, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-async def card_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def card_check_callback(update: Update, context):
     query = update.callback_query
     await query.answer()
     formats_text = (
@@ -91,9 +89,8 @@ async def card_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await query.edit_message_text(formats_text)
 
-async def send_card_formats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    save_user(user_id)
+async def send_card_formats(update: Update, context):
+    save_user(update.effective_user.id)
     formats_text = (
         "Welcome! Please provide your card details in a standard format:\n\n"
         "2222222222222222:22:22:222\n"
@@ -105,101 +102,119 @@ async def send_card_formats(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     await update.message.reply_text(formats_text)
 
-CARD_PATTERN = re.compile(r'^\d{16}([:/\s])\d{2}([:/\s])\d{2}([:/\s])\d{3}$')
+CARD_PATTERN = re.compile(r"^\d{16}[:/\s]\d{2}[:/\s]\d{2}[:/\s]\d{3,4}$")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_message(update: Update, context):
     global awaiting_broadcast
     user_input = update.message.text.strip()
     user_id = update.effective_user.id
     save_user(user_id)
 
     if user_id == ADMIN_ID and awaiting_broadcast:
-        all_users = get_all_users()
-        success_count = 0
-        fail_count = 0
-        for uid in all_users:
+        users = get_all_users()
+        ok = fail = 0
+        for uid in users:
             try:
                 await context.bot.copy_message(
                     chat_id=uid,
                     from_chat_id=update.effective_chat.id,
-                    message_id=update.message.message_id
+                    message_id=update.message.message_id,
                 )
-                success_count += 1
-            except Exception as e:
-                logger.error(f"ব্যর্থ {uid}: {e}")
-                fail_count += 1
+                ok += 1
+            except Exception:
+                fail += 1
         awaiting_broadcast = False
-        await update.message.reply_text(f"✅ ব্রডকাস্ট শেষ!\nসফল: {success_count}\nব্যর্থ: {fail_count}")
+        await update.message.reply_text(
+            f"✅ ব্রডকাস্ট শেষ!\nসফল: {ok}\nব্যর্থ: {fail}"
+        )
         return
 
     if CARD_PATTERN.match(user_input):
-        member = await is_user_member(user_id, context)
-        if not member:
-            await update.message.reply_text("You can't check the card because you're not a member of @vanilla_cards_bot")
+        member = await is_user_member(user_id, context.bot)
+        if member:
+            await update.message.reply_text(
+                "✅ You are a member! Card details received (demo).\n"
+                "Add your own card validation here."
+            )
         else:
-            await update.message.reply_text("✅ You are a member! Card details received (demo).\nAdd your own card validation here.")
+            await update.message.reply_text(
+                "You can't check the card because you're not a member of @Vanila_cards"
+            )
     else:
         await update.message.reply_text("❌ Invalid format")
 
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ আপনি এই কমান্ড ব্যবহার করার অনুমতি রাখেন না।")
+async def admin_command(update: Update, context):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text(
+            "⛔ আপনি এই কমান্ড ব্যবহার করার অনুমতি রাখেন না।"
+        )
         return
     global awaiting_broadcast
     awaiting_broadcast = True
     await update.message.reply_text(
-        "📢 **ব্রডকাস্ট মোড অন**\n\nএখন আপনি যে কোনো মেসেজ পাঠাবেন তা **সব ইউজারের কাছে** পৌঁছে যাবে।",
-        parse_mode="Markdown"
+        "📢 *ব্রডকাস্ট মোড অন*\n\n"
+        "এখন আপনি যে কোনো মেসেজ পাঠাবেন তা *সব ইউজারের কাছে* পৌঁছে যাবে।",
+        parse_mode="Markdown",
     )
 
-# রেজিস্ট্রেশন
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("card_chake", send_card_formats))
-dispatcher.add_handler(CommandHandler("admin", admin_command))
-dispatcher.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# ========== Application তৈরি ==========
+application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# ===================== ওয়েবহুক এন্ডপয়েন্ট =====================
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("card_chake", send_card_formats))
+application.add_handler(CommandHandler("admin", admin_command))
+application.add_handler(
+    CallbackQueryHandler(card_check_callback, pattern="^card_check$")
+)
+application.add_handler(
+    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+)
+
+# ========== ফ্লাস্ক রাউট ==========
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     try:
-        update = Update.de_json(request.get_json(), bot)
-        dispatcher.process_update(update)
+        data = request.get_json(force=True)
+        update = Update.de_json(data, application.bot)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
+        loop.close()
         return "ok", 200
     except Exception as e:
         logger.error(f"ওয়েবহুক ত্রুটি: {e}")
         return "error", 500
 
-@app.route("/", methods=["GET"])
+@app.route("/")
 def index():
     return "Bot is running", 200
 
-@app.route("/health", methods=["GET"])
+@app.route("/health")
 def health():
     return "OK", 200
 
-# ===================== ওয়েবহুক সেটআপ =====================
-async def set_webhook():
-    render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if not render_url:
-        # লোকাল ডেভেলপমেন্ট বা Render-এ URL সেট না থাকলে
-        render_url = "https://card-bot-2.onrender.com"  # আপনার Render URL দিন
-    webhook_url = f"{render_url}/{BOT_TOKEN}"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"ওয়েবহুক সেট করা হলো: {webhook_url}")
+# ========== ওয়েবহুক সেটআপ ==========
+def set_webhook():
+    render_url = os.environ.get(
+        "RENDER_EXTERNAL_URL", "https://card-bot-2.onrender.com"
+    )
+    webhook_url = f"{render_url}/webhook/{BOT_TOKEN}"
 
-# ===================== মেইন =====================
-if __name__ == "__main__":
-    if BOT_TOKEN == "এখানে বট টুকেন বসান":
-        raise RuntimeError("দয়া করে বট টোকেন দিন।")
+    async def _set():
+        await application.initialize()
+        await application.bot.set_webhook(webhook_url)
+        logger.info(f"✅ ওয়েবহুক সেট: {webhook_url}")
 
-    # ইভেন্ট লুপ ম্যানুয়ালি চালিয়ে ওয়েবহুক সেট করি
-    import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(set_webhook())
+    loop.run_until_complete(_set())
+    loop.close()
 
-    # ফ্লাস্ক চালু (Render-এর জন্য)
+if __name__ == "__main__":
+    if not BOT_TOKEN:
+        logger.error("❌ BOT_TOKEN environment variable সেট করা নেই!")
+        exit(1)
+
+    set_webhook()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
