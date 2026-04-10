@@ -1,17 +1,14 @@
 import re
 import os
 import logging
-import asyncio
-import threading
-from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.request import HTTPXRequest
+from flask import Flask, request
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = "7839522620:AAF1GmIbycG35SiITOhOYbHvwB_yc1seEQo"   # <-- এখানে আপনার আসল টোকেন দিন
+BOT_TOKEN = "এখানে বট টুকেন বসান"   # আপনার টোকেন দিন
 
 USER_FILE = "users.txt"
 
@@ -21,18 +18,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-awaiting_broadcast = False
+# ফ্লাস্ক অ্যাপ
+app = Flask(__name__)
 
-# Flask app for health check
-flask_app = Flask(__name__)
+# বট ও ডিসপ্যাচার
+bot = Bot(token=BOT_TOKEN)
+dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
 
-@flask_app.route("/")
-def health():
-    return "Bot is running", 200
-
-@flask_app.route("/health")
-def health_check():
-    return "OK", 200
+awaiting_broadcast = False  # ব্রডকাস্ট স্টেট (ইন-মেমরি)
 
 # ===================== ইউজার ম্যানেজমেন্ট =====================
 def load_users():
@@ -160,37 +153,53 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode="Markdown"
     )
 
-# ===================== বট চালানোর ফাংশন =====================
-def run_bot():
-    # ইভেন্ট লুপ ফিক্স (Python 3.14+)
+# রেজিস্ট্রেশন
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("card_chake", send_card_formats))
+dispatcher.add_handler(CommandHandler("admin", admin_command))
+dispatcher.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+# ===================== ওয়েবহুক এন্ডপয়েন্ট =====================
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        update = Update.de_json(request.get_json(), bot)
+        dispatcher.process_update(update)
+        return "ok", 200
+    except Exception as e:
+        logger.error(f"ওয়েবহুক ত্রুটি: {e}")
+        return "error", 500
 
-    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, write_timeout=30.0, pool_timeout=30.0)
-    app = Application.builder().token(BOT_TOKEN).request(request).build()
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is running", 200
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("card_chake", send_card_formats))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+@app.route("/health", methods=["GET"])
+def health():
+    return "OK", 200
 
-    logger.info("বট চালু হচ্ছে (পোলিং মোড)...")
-    app.run_polling()
+# ===================== ওয়েবহুক সেটআপ =====================
+async def set_webhook():
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not render_url:
+        # লোকাল ডেভেলপমেন্ট বা Render-এ URL সেট না থাকলে
+        render_url = "https://card-bot-2.onrender.com"  # আপনার Render URL দিন
+    webhook_url = f"{render_url}/{BOT_TOKEN}"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"ওয়েবহুক সেট করা হলো: {webhook_url}")
 
 # ===================== মেইন =====================
 if __name__ == "__main__":
     if BOT_TOKEN == "এখানে বট টুকেন বসান":
-        logger.error("❌ বট টোকেন সেট করুন।")
-        exit(1)
+        raise RuntimeError("দয়া করে বট টোকেন দিন।")
 
-    # একটি আলাদা থ্রেডে বট চালান (যাতে Flask ও পোলিং একসাথে চলে)
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+    # ইভেন্ট লুপ ম্যানুয়ালি চালিয়ে ওয়েবহুক সেট করি
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(set_webhook())
 
-    # Flask সার্ভার চালু করুন (Render হেলথ চেকের জন্য)
+    # ফ্লাস্ক চালু (Render-এর জন্য)
     port = int(os.environ.get("PORT", 5000))
-    flask_app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port)
