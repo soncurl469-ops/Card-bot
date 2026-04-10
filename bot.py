@@ -2,23 +2,31 @@ import re
 import os
 import logging
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from flask import Flask, request
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
 
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-# এনভায়রনমেন্ট ভেরিয়েবল থেকে টোকেন নিন (Render-এ সেট করুন)
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.environ.get("7839522620:AAEJTKjxrjzak0zcca0eF11TzVgS0X5lNwk")
 if not BOT_TOKEN:
-    BOT_TOKEN = "7839522620:AAFvj1xT2R1jxjLrzpf2Cz6jbHtFM7xcfSA"  # সরাসরি লিখলেও চলে, কিন্তু এনভ ব্যবহার ভালো
+    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable not set.")
 
 USER_FILE = "users.txt"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Flask app
+app = Flask(__name__)
+
+# Bot instance
+bot = Bot(token=BOT_TOKEN, request=HTTPXRequest())
+dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
+
+# ব্রডকাস্ট স্টেট
 awaiting_broadcast = False
 
 # ===================== ইউজার ম্যানেজমেন্ট =====================
@@ -107,7 +115,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_id = update.effective_user.id
     save_user(user_id)
 
-    # অ্যাডমিন ব্রডকাস্ট
     if user_id == ADMIN_ID and awaiting_broadcast:
         all_users = get_all_users()
         success_count = 0
@@ -127,7 +134,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"✅ ব্রডকাস্ট শেষ!\nসফল: {success_count}\nব্যর্থ: {fail_count}")
         return
 
-    # কার্ড ফরম্যাট চেক
     if CARD_PATTERN.match(user_input):
         member = await is_user_member(user_id, context)
         if not member:
@@ -149,29 +155,49 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode="Markdown"
     )
 
-# ===================== মেইন ফাংশন (ইভেন্ট লুপ ফিক্স সহ) =====================
-def main():
-    # Python 3.14+ এ ইভেন্ট লুপ সেট করা
+# রেজিস্ট্রেশন
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("card_chake", send_card_formats))
+dispatcher.add_handler(CommandHandler("admin", admin_command))
+dispatcher.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
+dispatcher.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+
+# ===================== ফ্লাস্ক ওয়েবহুক =====================
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    try:
+        update = Update.de_json(request.get_json(), bot)
+        asyncio.create_task(dispatcher.process_update(update))
+        return "ok", 200
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return "error", 500
+
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is running"
+
+# ===================== ওয়েবহুক সেটআপ =====================
+async def set_webhook():
+    render_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not render_url:
+        # লোকাল টেস্টিং বা ভিন্ন এনভ
+        render_url = f"https://{os.environ.get('RENDER_SERVICE_NAME', 'localhost')}.onrender.com"
+    webhook_url = f"{render_url}/{BOT_TOKEN}"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
+
+if __name__ == "__main__":
+    # ইভেন্ট লুপ ফিক্স (Python 3.14+)
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-    if not BOT_TOKEN or BOT_TOKEN == "এখানে বট টুকেন দিন":
-        raise RuntimeError("দয়া করে TELEGRAM_BOT_TOKEN এনভায়রনমেন্ট ভেরিয়েবল সেট করুন।")
-
-    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, write_timeout=30.0, pool_timeout=30.0)
-    app = Application.builder().token(BOT_TOKEN).request(request).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("card_chake", send_card_formats))
-    app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-
-    logger.info("বট চালু হচ্ছে...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    
+    # ওয়েবহুক সেট করো (প্রতিবার রিস্টার্টে একবার)
+    loop.run_until_complete(set_webhook())
+    
+    # Flask চালু
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
