@@ -8,7 +8,7 @@ from telegram.ext import Dispatcher, CommandHandler, MessageHandler, CallbackQue
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = "এখানে বট টুকেন বসান"   # আপনার টোকেন দিন
+BOT_TOKEN = "7839522620:AAHviH1of-nnj6Wxslv0YYdTE5b5CoiMNP8"   # আপনার টোকেন দিন
 
 USER_FILE = "users.txt"
 
