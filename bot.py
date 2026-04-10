@@ -1,6 +1,7 @@
 import re
 import os
 import logging
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
@@ -8,7 +9,11 @@ from telegram.request import HTTPXRequest
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = "7839522620:AAFvj1xT2R1jxjLrzpf2Cz6jbHtFM7xcfSA"  # আপনার টোকেন দিন
+# এনভায়রনমেন্ট ভেরিয়েবল থেকে টোকেন নিন (Render-এ সেট করুন)
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    BOT_TOKEN = "7839522620:AAFvj1xT2R1jxjLrzpf2Cz6jbHtFM7xcfSA"  # সরাসরি লিখলেও চলে, কিন্তু এনভ ব্যবহার ভালো
+
 USER_FILE = "users.txt"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -16,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 awaiting_broadcast = False
 
-# ইউজার ম্যানেজমেন্ট
+# ===================== ইউজার ম্যানেজমেন্ট =====================
 def load_users():
     if not os.path.exists(USER_FILE):
         return set()
@@ -34,7 +39,7 @@ def save_user(user_id: int):
 def get_all_users():
     return load_users()
 
-# মেম্বারশিপ চেক
+# ===================== মেম্বারশিপ চেক =====================
 async def is_user_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         chat_member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
@@ -43,7 +48,7 @@ async def is_user_member(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bo
         logger.error(f"মেম্বারশিপ চেক ব্যর্থ {user_id}: {e}")
         return False
 
-# /start হ্যান্ডলার (দুটি বাটন সহ)
+# ===================== হ্যান্ডলার =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     save_user(user_id)
@@ -66,7 +71,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# Card Chake বাটনে ক্লিক করলে (প্লেইন টেক্সট আকারে ফরম্যাট দেখাবে)
 async def card_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -81,7 +85,6 @@ async def card_check_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await query.edit_message_text(formats_text)
 
-# /card_chake কমান্ড (একই প্লেইন টেক্সট)
 async def send_card_formats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     save_user(user_id)
@@ -96,7 +99,6 @@ async def send_card_formats(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     await update.message.reply_text(formats_text)
 
-# কার্ড প্যাটার্ন চেক
 CARD_PATTERN = re.compile(r'^\d{16}([:/\s])\d{2}([:/\s])\d{2}([:/\s])\d{3}$')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -147,17 +149,28 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode="Markdown"
     )
 
+# ===================== মেইন ফাংশন (ইভেন্ট লুপ ফিক্স সহ) =====================
 def main():
-    if BOT_TOKEN == "এখানে বট টুকেন দিন":
-        raise RuntimeError("দয়া করে আপনার বট টোকেন দিন।")
+    # Python 3.14+ এ ইভেন্ট লুপ সেট করা
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if not BOT_TOKEN or BOT_TOKEN == "এখানে বট টুকেন দিন":
+        raise RuntimeError("দয়া করে TELEGRAM_BOT_TOKEN এনভায়রনমেন্ট ভেরিয়েবল সেট করুন।")
+
     request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0, write_timeout=30.0, pool_timeout=30.0)
     app = Application.builder().token(BOT_TOKEN).request(request).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("card_chake", send_card_formats))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CallbackQueryHandler(card_check_callback, pattern="^card_check$"))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-    logger.info("বট চালু হয়েছে...")
+
+    logger.info("বট চালু হচ্ছে...")
     app.run_polling()
 
 if __name__ == "__main__":
