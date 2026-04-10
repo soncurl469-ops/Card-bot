@@ -9,7 +9,7 @@ from telegram.request import HTTPXRequest
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.environ.get("7839522620:AAEJTKjxrjzak0zcca0eF11TzVgS0X5lNwk")
 if not BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable not set.")
 
