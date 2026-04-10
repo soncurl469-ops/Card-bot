@@ -15,7 +15,7 @@ from telegram.ext import (
 # ========== কনফিগারেশন ==========
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "7839522620:AAHviH1of-nnj6Wxslv0YYdTE5b5CoiMNP8")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "7839522620:AAFZPWXQ3Hpb_40Ie_w5yjiHNphUAo0J0mU")
 
 USER_FILE = "users.txt"
 
