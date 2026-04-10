@@ -8,7 +8,7 @@ from telegram.request import HTTPXRequest
 # ===================== কনফিগারেশন =====================
 CHANNEL_USERNAME = "@Vanila_cards"
 ADMIN_ID = 8508012498
-BOT_TOKEN = "এখানে বট টুকেন দিন"  # আপনার টোকেন দিন
+BOT_TOKEN = "7839522620:AAFvj1xT2R1jxjLrzpf2Cz6jbHtFM7xcfSA"  # আপনার টোকেন দিন
 USER_FILE = "users.txt"
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
